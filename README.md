@@ -60,7 +60,7 @@ cci -t your-token    \
     -p your-project  \
     -v your-vcs-type \ # default of 'github'
     -b your-branch   \ # optional
-    -l a limit         # default of 5
+    -l a-limit         # default of 5
 ```
 
 ## License
