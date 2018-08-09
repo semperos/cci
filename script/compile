@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -e -u
+
+cd "$(dirname $0)/.."
+
+ARCH="unknown"
+
+command -v uname >/dev/null 2>&1 && ARCH="$(uname)"
+
+case $ARCH in
+    "Darwin")
+        ARCH="macOS"
+        ;;
+esac
+
+echo "Compiling for $ARCH..."
+CLASSES_FOLDER=target/custom/classes
+TARGET_FILE="target/custom/bin/cci-$ARCH"
+
+if [ ! -f target/custom/cci.jar ]; then
+    ./script/uberjar
+fi
+
+mkdir -p target/custom/bin
+
+cd $CLASSES_FOLDER
+$GRAAL_HOME/bin/native-image com.semperos.cci
+cd ../../..
+
+cp $CLASSES_FOLDER/com.semperos.cci $TARGET_FILE
+echo "Wrote executable to $TARGET_FILE"
