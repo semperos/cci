@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -e -u
+
+cd "$(dirname $0)/.."
+
+echo "--- Building uberjar ---"
+echo "Setting up directories..."
+rm -rf target/custom
+mkdir -p target/custom/classes
+echo "Unpacking dependency JARs..."
+for jar in $(clojure -A:uberjar -Spath | awk 'BEGIN { RS = ":" } /\.jar/ { print $0 }')
+do
+    unzip -uoq "$jar" -d target/custom/classes
+done
+
+echo "Copying local directories on classpath..."
+for dir in $(clojure -A:uberjar -Spath | awk 'BEGIN { RS = ":" } /target\/custom/ { next } /^\s*[^\/]/ { print $0 }')
+do
+    cp -f -R "$dir" target/custom/classes/
+done
+
+echo "Compiling main Clojure namespace to a Java class..."
+clojure -A:uberjar -e "(binding [*compile-path* \"target/custom/classes\"] (compile 'com.semperos.cci))"
+
+UBERJAR_NAME=cci.jar
+TARGET_DIR=target/custom
+echo "Creating executable JAR file at $TARGET_DIR/$UBERJAR_NAME ..."
+cd $TARGET_DIR/classes
+jar cvfe ../$UBERJAR_NAME com.semperos.cci ./* > /dev/null
+cd ../../..
+echo "--- Finished building uberjar ---"

@@ -1,0 +1,20 @@
+{:paths ["resources" "src"]
+ :deps {org.clojure/clojure {:mvn/version "RELEASE"}
+        cheshire {:mvn/version "5.8.0"}
+        clansi {:mvn/version "1.0.0"}
+        ;; Uses advanced clojure.pprint facilities which are not compatible with
+        ;; GraalVM at this time.
+        ;; org.clojure/tools.cli {:mvn/version "0.3.7"}
+
+        ;; Uses features that are not supported by GraalVM at this time.
+        ;; clj-http {:mvn/version "3.9.1"}
+        }
+ :aliases
+ {:test {:extra-paths ["test"]
+         :extra-deps {org.clojure/test.check {:mvn/version "RELEASE"}}}
+  :runner
+  {:extra-deps {com.cognitect/test-runner
+                {:git/url "https://github.com/cognitect-labs/test-runner"
+                 :sha "76568540e7f40268ad2b646110f237a60295fa3c"}}
+   :main-opts ["-m" "cognitect.test-runner"
+               "-d" "test"]}}}
