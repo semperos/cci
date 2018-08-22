@@ -33,8 +33,18 @@
     (or (get env "CIRCLE_VCS_TYPE")
         (get env "CIRCLECI_VCS_TYPE"))))
 
-(defn cci-base-url [vcs-type user-or-org]
-  (format "https://circleci.com/api/v1.1/project/%s/%s" vcs-type user-or-org))
+(defn cci-base-url
+  ([vcs-type user-or-org project]
+   (format "https://circleci.com/api/v1.1/project/%s/%s/%s"
+           (name vcs-type)
+           user-or-org
+           project))
+  ([vcs-type user-or-org project build-num]
+   (format "https://circleci.com/api/v1.1/project/%s/%s/%s/%s"
+           (name vcs-type)
+           user-or-org
+           project
+           build-num)))
 
 (defn exit [status msg]
   (println msg)
@@ -44,6 +54,7 @@
   (str/replace s #"(\[\d+m)" ""))
 
 (def ^:dynamic *color* true)
+(def ^:dynamic *output-format* :table)
 
 (defn colorize [s styles]
   (if *color*
@@ -57,7 +68,7 @@
    "running"     [:cyan]
    "success"     [:green]
    "failed"      [:red]
-   "--project"      [:red]
+   "--project"   [:red]
    "--username"  [:red]
    "--branch"    [:yellow]})
 
@@ -103,6 +114,23 @@
          (println (fmt-row "+-" "-+-" "-+" (zipmap ks spacers)))))))
   ([rows] (print-table (keys (first rows)) rows)))
 
+(defn print-output
+  "Honor the *output-format* the user asked for."
+  ([x] (print-output nil x))
+  ([columns x]
+   (case *output-format*
+     :table (let [x (if (sequential? x)
+                      x
+                      [x])]
+              (if columns
+                (print-table columns x)
+                (print-table x)))
+     ;; TODO Give user ability to toggle :pretty
+     ;; TODO Filter the output by desired "columns"
+     :json  (println (json/generate-string x {:pretty true}))
+     ;; TODO Do better than straight EDN
+     :edn   (prn-str x))))
+
 (def builds-columns
   "TODO Allow users to customize this list based on what CircleCI provides."
   [:repo :branch :committer :status :start :stop :url])
@@ -146,11 +174,10 @@
 (defn cci-builds [{:keys [branch filter limit
                           project token username vcs-type]
                    :or   {limit 5}}]
-  (let [base-url (cci-base-url vcs-type username)
-        url    (str base-url "/" project)
+  (let [base-url (cci-base-url vcs-type username project)
         url    (if branch
-                 (str url "/tree/" branch)
-                 url)
+                 (str base-url "/tree/" branch)
+                 base-url)
         params (cond-> {:circle-token token
                         :limit limit}
                  filter (assoc :filter filter))
@@ -159,7 +186,20 @@
                               :query-params params})
         status (:status resp)]
     (case status
-      200 (print-table builds-columns (builds-table (:body resp)))
+      200 (print-output builds-columns (builds-table (:body resp)))
+      (throw (ex-info (str "Call to " url " failed with a " status "status")
+                      {:response resp})))))
+
+(defn cci-build [{:keys [build-num project token username vcs-type]}]
+  (let [url    (cci-base-url vcs-type username project build-num)
+        params {:circle-token token}
+        resp   (http-get url {:accept       :json
+                              :as           :json
+                              :query-params params})
+        status (:status resp)]
+    (case status
+      ;; TODO Handle truncation
+      200 (print-output (dissoc (:body resp) :all_commit_details :circle_yml :steps :workflows))
       (throw (ex-info (str "Call to " url " failed with a " status "status")
                       {:response resp})))))
 
@@ -171,7 +211,9 @@
   [["-u" "--username USER_OR_ORG_NAME" "Optionally, set CIRCLE_PROJECT_USER or CIRCLE_PROJECT_ORG."]
    ["-p" "--project PROJECT_NAME" "Project or repository name"]
    ["-b" "--branch BRANCH_NAME" "(Optional) Branch name"]
+   ["-n" "--build-num BUILD_NUMBER" "(Optional) Build number, for details on single build."]
    ["-c" "--[no-]color" "Colorize output with ANSI escape codes (defaults to true)." :default true]
+   ["-f" "--output-format FORMAT" "Output format. One of: 'table', 'json', 'edn'." :default "table"]
    ["-h" "--help"]
    ["-l" "--limit LIMIT" "Number of builds to view."
     :default  5
@@ -208,16 +250,24 @@
 
 (defn parse-args
   [args]
-  (let [{:keys [options arguments summary errors]} (cli/parse-opts args cli-options :summary-fn summary-fn)
-        {:keys [branch limit project
-                token username vcs-type]} options
-        token (or token (cci-token))
-        username (or username
-                     (cci-project-user)
-                     (cci-project-org))
-        return {:options (assoc options
-                                :token token
-                                :username username)}]
+  (let [{:keys [options arguments summary errors]}
+        (cli/parse-opts args cli-options :summary-fn summary-fn)
+
+        {:keys [branch build-num limit output-format project
+                token username vcs-type]}
+        options
+
+        output-format (keyword output-format)
+        token         (or token (cci-token))
+        username      (or username
+                          (cci-project-user)
+                          (cci-project-org))
+        vcs-type      (keyword vcs-type)
+        return        {:options (assoc options
+                                       :output-format output-format
+                                       :token token
+                                       :username username
+                                       :vcs-type vcs-type)}]
     (binding [*color* (:color options)]
       (cond
         (:help options)
@@ -235,7 +285,12 @@
                                   " to create one.")
                :ok? 0)
 
-        (not (#{"github" "bitbucket"} vcs-type))
+        (not (#{:table :json :edn} output-format))
+        (assoc return
+               :exit-message "Invalid output format. Must be one of: 'table', 'json', or 'edn'."
+               :ok? 0)
+
+        (not (#{:github :bitbucket} vcs-type))
         (assoc return
                :exit-message "Invalid VCS type. Must be either 'github' or 'bitbucket'."
                :ok? 0)
@@ -266,13 +321,16 @@
                :ok? 0)))))
 
 (defn run [options]
-  (cci-builds options)
+  (if-let [build-number (:build-num options)]
+    (cci-build options)
+    (cci-builds options))
   (shutdown-agents))
 
 (defn -main
   [& args]
   (let [{:keys [options exit-message ok?]} (parse-args args)]
-    (binding [*color* (:color options)]
+    (binding [*color*         (:color options)
+              *output-format* (:output-format options)]
       (if exit-message
         (exit ([1 0] ok?) exit-message)
         (run options)))))
