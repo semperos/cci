@@ -12,6 +12,7 @@
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "RELEASE"}}}
+  :uberjar {:extra-paths ["target/custom"]}
   :runner
   {:extra-deps {com.cognitect/test-runner
                 {:git/url "https://github.com/cognitect-labs/test-runner"
