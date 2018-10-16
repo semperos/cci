@@ -2,9 +2,10 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [clojure.java.shell :as sh]
-            [com.semperos.cci.cli :as cli]
-            clansi
             [cheshire.core :as json]
+            clansi
+            [clj-jgit.porcelain :as git]
+            [com.semperos.cci.cli :as cli]
             #_[clojure.java.io :as io]
             #_[clj-http.client :as http])
   (:gen-class))
@@ -17,6 +18,11 @@
   (let [env (env)]
     (or (get env "CIRCLE_TOKEN")
         (get env "CIRCLECI_TOKEN"))))
+
+(defn cci-project []
+  (let [env (env)]
+    (or (get env "CIRCLE_PROJECT")
+        (get env "CIRCLECI_PROJECT"))))
 
 (defn cci-project-user []
   (let [env (env)]
@@ -175,16 +181,16 @@
                           project token username vcs-type]
                    :or   {limit 5}}]
   (let [base-url (cci-base-url vcs-type username project)
-        url    (if branch
-                 (str base-url "/tree/" branch)
-                 base-url)
-        params (cond-> {:circle-token token
-                        :limit limit}
-                 filter (assoc :filter filter))
-        resp   (http-get url {:accept       :json
-                              :as           :json
-                              :query-params params})
-        status (:status resp)]
+        url      (if branch
+                   (str base-url "/tree/" branch)
+                   base-url)
+        params   (cond-> {:circle-token token
+                          :limit limit}
+                   filter (assoc :filter filter))
+        resp     (http-get url {:accept       :json
+                                :as           :json
+                                :query-params params})
+        status   (:status resp)]
     (case status
       200 (print-output builds-columns (builds-table (:body resp)))
       (throw (ex-info (str "Call to " url " failed with a " status "status")
@@ -233,6 +239,12 @@
         options-summary]
        (str/join \newline)))
 
+(defn git-current-branch
+  []
+  (try
+    (git/with-repo "." (git/git-branch-current repo))
+    (catch Throwable _ nil)))
+
 (def options-keymap
   {:required :name
    :desc     :description})
@@ -257,14 +269,18 @@
                 token username vcs-type]}
         options
 
+        branch        (or branch (git-current-branch))
         output-format (keyword output-format)
+        project       (or project (cci-project))
         token         (or token (cci-token))
         username      (or username
                           (cci-project-user)
                           (cci-project-org))
         vcs-type      (keyword vcs-type)
         return        {:options (assoc options
+                                       :branch branch
                                        :output-format output-format
+                                       :project project
                                        :token token
                                        :username username
                                        :vcs-type vcs-type)}]
