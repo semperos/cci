@@ -3,6 +3,7 @@
         cheshire {:mvn/version "5.8.0"}
         clansi {:mvn/version "1.0.0"}
         clj-jgit {:mvn/version "0.8.10"}
+        clojure.java-time {:mvn/version "0.3.2"}
         ;; Uses advanced clojure.pprint facilities which are not compatible with
         ;; GraalVM at this time.
         ;; org.clojure/tools.cli {:mvn/version "0.3.7"}

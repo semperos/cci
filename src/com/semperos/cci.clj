@@ -6,6 +6,7 @@
             clansi
             [clj-jgit.porcelain :as git]
             [com.semperos.cci.cli :as cli]
+            [java-time :as jt]
             #_[clojure.java.io :as io]
             #_[clj-http.client :as http])
   (:gen-class))
@@ -137,26 +138,54 @@
      ;; TODO Do better than straight EDN
      :edn   (prn-str x))))
 
+(defn ago
+  "Return human-friendly representation of a time in the past as 'so many units ago'"
+  ([then] (ago then (jt/local-date-time)))
+  ([then now]
+   (let [sep ", "
+         [days hours minutes] (jt/as (jt/duration then now)
+                                     :days :hours :minutes)
+         day-str (when-not (zero? days)
+                   (str days " days"))
+         hour-str (when-not (zero? hours)
+                    (if day-str
+                      (let [remainder (rem hours 24)]
+                        (when-not (zero? remainder)
+                          (str sep remainder " hours")))
+                      (str hours " hours")))
+         min-str (when-not (zero? minutes)
+                   (if hour-str
+                     (let [remainder (rem minutes 60)]
+                       (when-not (zero? remainder)
+                         (str sep remainder " mins")))
+                     (str minutes " mins")))]
+     (apply str day-str hour-str min-str " ago"))))
+
+(defn parse-dt
+  [dt]
+  (jt/local-date-time "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'" dt))
+
 (def builds-columns
   "TODO Allow users to customize this list based on what CircleCI provides."
   [:repo :branch :committer :status :start :stop :url])
 
 (defn builds-table [builds-response]
-  (map (fn [{branch    :branch
-             committer :committer_name
-             repo      :reponame
-             start     :start_time
-             status    :status
-             stop      :stop_time
-             url       :build_url}]
-         {:branch    branch
-          :committer committer
-          :repo      repo
-          :start     start
-          :status    status
-          :stop      stop
-          :url       url})
-       builds-response))
+  (let [now (jt/local-date-time)]
+    (map (fn [{branch    :branch
+               committer :committer_name
+               repo      :reponame
+               start     :start_time
+               status    :status
+               stop      :stop_time
+               url       :build_url}]
+           {:branch    branch
+            :committer committer
+            :repo      repo
+            :start     (when start (ago (parse-dt start) now))
+            :status    status
+            :stop      (when stop (ago (parse-dt stop) now))
+            :url       url})
+         builds-response)))
 
 (defn url-encode [x]
   (java.net.URLEncoder/encode x "UTF-8"))
