@@ -63,6 +63,11 @@ cci -t your-token    \
     -l a-limit         # default of 5
 ```
 
+## Ideas
+
+- [ ] (Khiem Lam) Use relative time for builds (N minutes ago...) rather than
+      absolute.
+
 ## License
 
 Copyright © 2018 Daniel Gregoire

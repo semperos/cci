@@ -2,9 +2,11 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [clojure.java.shell :as sh]
-            [com.semperos.cci.cli :as cli]
-            clansi
             [cheshire.core :as json]
+            clansi
+            [clj-jgit.porcelain :as git]
+            [com.semperos.cci.cli :as cli]
+            [java-time :as jt]
             #_[clojure.java.io :as io]
             #_[clj-http.client :as http])
   (:gen-class))
@@ -17,6 +19,11 @@
   (let [env (env)]
     (or (get env "CIRCLE_TOKEN")
         (get env "CIRCLECI_TOKEN"))))
+
+(defn cci-project []
+  (let [env (env)]
+    (or (get env "CIRCLE_PROJECT")
+        (get env "CIRCLECI_PROJECT"))))
 
 (defn cci-project-user []
   (let [env (env)]
@@ -131,26 +138,54 @@
      ;; TODO Do better than straight EDN
      :edn   (prn-str x))))
 
+(defn ago
+  "Return human-friendly representation of a time in the past as 'so many units ago'"
+  ([then] (ago then (jt/local-date-time)))
+  ([then now]
+   (let [sep ", "
+         [days hours minutes] (jt/as (jt/duration then now)
+                                     :days :hours :minutes)
+         day-str (when-not (zero? days)
+                   (str days " days"))
+         hour-str (when-not (zero? hours)
+                    (if day-str
+                      (let [remainder (rem hours 24)]
+                        (when-not (zero? remainder)
+                          (str sep remainder " hours")))
+                      (str hours " hours")))
+         min-str (when-not (zero? minutes)
+                   (if hour-str
+                     (let [remainder (rem minutes 60)]
+                       (when-not (zero? remainder)
+                         (str sep remainder " mins")))
+                     (str minutes " mins")))]
+     (apply str day-str hour-str min-str " ago"))))
+
+(defn parse-dt
+  [dt]
+  (jt/local-date-time "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'" dt))
+
 (def builds-columns
   "TODO Allow users to customize this list based on what CircleCI provides."
   [:repo :branch :committer :status :start :stop :url])
 
 (defn builds-table [builds-response]
-  (map (fn [{branch    :branch
-             committer :committer_name
-             repo      :reponame
-             start     :start_time
-             status    :status
-             stop      :stop_time
-             url       :build_url}]
-         {:branch    branch
-          :committer committer
-          :repo      repo
-          :start     start
-          :status    status
-          :stop      stop
-          :url       url})
-       builds-response))
+  (let [now (jt/local-date-time)]
+    (map (fn [{branch    :branch
+               committer :committer_name
+               repo      :reponame
+               start     :start_time
+               status    :status
+               stop      :stop_time
+               url       :build_url}]
+           {:branch    branch
+            :committer committer
+            :repo      repo
+            :start     (when start (ago (parse-dt start) now))
+            :status    status
+            :stop      (when stop (ago (parse-dt stop) now))
+            :url       url})
+         builds-response)))
 
 (defn url-encode [x]
   (java.net.URLEncoder/encode x "UTF-8"))
@@ -175,16 +210,16 @@
                           project token username vcs-type]
                    :or   {limit 5}}]
   (let [base-url (cci-base-url vcs-type username project)
-        url    (if branch
-                 (str base-url "/tree/" branch)
-                 base-url)
-        params (cond-> {:circle-token token
-                        :limit limit}
-                 filter (assoc :filter filter))
-        resp   (http-get url {:accept       :json
-                              :as           :json
-                              :query-params params})
-        status (:status resp)]
+        url      (if branch
+                   (str base-url "/tree/" branch)
+                   base-url)
+        params   (cond-> {:circle-token token
+                          :limit limit}
+                   filter (assoc :filter filter))
+        resp     (http-get url {:accept       :json
+                                :as           :json
+                                :query-params params})
+        status   (:status resp)]
     (case status
       200 (print-output builds-columns (builds-table (:body resp)))
       (throw (ex-info (str "Call to " url " failed with a " status "status")
@@ -233,6 +268,12 @@
         options-summary]
        (str/join \newline)))
 
+(defn git-current-branch
+  []
+  (try
+    (git/with-repo "." (git/git-branch-current repo))
+    (catch Throwable _ nil)))
+
 (def options-keymap
   {:required :name
    :desc     :description})
@@ -257,14 +298,18 @@
                 token username vcs-type]}
         options
 
+        branch        (or branch (git-current-branch))
         output-format (keyword output-format)
+        project       (or project (cci-project))
         token         (or token (cci-token))
         username      (or username
                           (cci-project-user)
                           (cci-project-org))
         vcs-type      (keyword vcs-type)
         return        {:options (assoc options
+                                       :branch branch
                                        :output-format output-format
+                                       :project project
                                        :token token
                                        :username username
                                        :vcs-type vcs-type)}]
