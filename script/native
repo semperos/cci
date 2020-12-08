@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# -*- mode: shellscript -*-
+
+set -eou pipefail
+
+cd "$(dirname $0)/.."
+
+CCI_XMX=${CCI_XMX:-"-J-Xmx4000m"}
+
+if [ -z "$GRAALVM_HOME" ]; then
+    echo "You must set GRAALVM_HOME"
+    exit 1
+fi
+
+CCI_VERSION=$(cat resources/VERSION)
+
+CCI_JAR=${CCI_JAR:-"target/custom/cci-$CCI_VERSION-standalone.jar"}
+
+./script/_uberjar
+
+"$GRAALVM_HOME/bin/gu" install native-image
+
+export JAVA_HOME=$GRAALVM_HOME
+export PATH=$GRAALVM_HOME/bin:$PATH
+
+ARCH="unknown"
+
+command -v uname >/dev/null 2>&1 && ARCH="$(uname)"
+
+case $ARCH in
+    "Darwin")
+        ARCH="macOS"
+        ;;
+esac
+
+CCI_BINARY=${CCI_BINARY:-"cci-$ARCH"}
+
+args=( "-jar" "$CCI_JAR"
+       "-H:Name=$CCI_BINARY"
+       "-H:+ReportExceptionStackTraces"
+       "-H:+TraceClassInitialization"
+       "-J-Dclojure.spec.skip-macros=true"
+       "-J-Dclojure.compiler.direct-linking=true"
+       "-J-Dmalli.registry/type=custom"
+       "-H:IncludeResources=VERSION"
+       "-H:ReflectionConfigurationFiles=reflection.json"
+       "--initialize-at-run-time=java.lang.Math\$RandomNumberGeneratorHolder"
+       "--initialize-at-build-time"
+       "--enable-all-security-services"
+       "--verbose"
+       "--no-fallback"
+       "--no-server"
+       "--report-unsupported-elements-at-runtime"
+       "$CCI_XMX" )
+
+"$GRAALVM_HOME/bin/native-image" "${args[@]}"

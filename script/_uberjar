@@ -4,6 +4,8 @@ set -e -u
 
 cd "$(dirname $0)/.."
 
+CCI_VERSION=$(cat resources/VERSION)
+
 echo "--- Building uberjar ---"
 echo "Setting up directories..."
 rm -rf target/custom
@@ -23,10 +25,10 @@ done
 echo "Compiling main Clojure namespace to a Java class..."
 clojure -A:uberjar -e "(binding [*compile-path* \"target/custom/classes\"] (compile 'com.semperos.cci))"
 
-UBERJAR_NAME=cci.jar
+UBERJAR_NAME="cci-$CCI_VERSION-standalone.jar"
 TARGET_DIR=target/custom
 echo "Creating executable JAR file at $TARGET_DIR/$UBERJAR_NAME ..."
 cd $TARGET_DIR/classes
-jar cvfe ../$UBERJAR_NAME com.semperos.cci ./* > /dev/null
+jar cvfe "../$UBERJAR_NAME" com.semperos.cci ./* > /dev/null
 cd ../../..
 echo "--- Finished building uberjar ---"

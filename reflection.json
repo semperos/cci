@@ -1,0 +1,6 @@
+[{
+    "name" : "java.net.URLEncoder",
+    "allPublicMethods" : true,
+    "allPublicFields" : true,
+    "allPublicConstructors" : true
+}]

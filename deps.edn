@@ -1,5 +1,5 @@
 {:paths ["resources" "src"]
- :deps {org.clojure/clojure {:mvn/version "RELEASE"}
+ :deps {org.clojure/clojure {:mvn/version "1.10.2-alpha4"}
         cheshire {:mvn/version "5.8.0"}
         clansi {:mvn/version "1.0.0"}
         ;; Uses advanced clojure.pprint facilities which are not compatible with
