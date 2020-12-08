@@ -1,37 +1,38 @@
 (ns com.semperos.cci
-  (:require [clojure.set :as set]
-            [clojure.string :as str]
-            [clojure.java.shell :as sh]
-            [com.semperos.cci.cli :as cli]
+  (:require [cheshire.core :as json]
             clansi
-            [cheshire.core :as json]
-            #_[clojure.java.io :as io]
-            #_[clj-http.client :as http])
+            [clojure.java.shell :as sh]
+            [clojure.set :as set]
+            [clojure.string :as str]
+            [com.semperos.cci.cli :as cli])
+  (:import
+   (com.fasterxml.jackson.core JsonParseException))
   (:gen-class))
 
 (defn env* [] (System/getenv))
 
 (def env (memoize env*))
 
-(defn cci-token []
+(defn- cci-token []
   (let [env (env)]
     (or (get env "CIRCLE_TOKEN")
         (get env "CIRCLECI_TOKEN"))))
 
-(defn cci-project-user []
+(defn- cci-project-user []
   (let [env (env)]
     (or (get env "CIRCLE_PROJECT_USER")
         (get env "CIRCLECI_PROJECT_USER"))))
 
-(defn cci-project-org []
+(defn- cci-project-org []
   (let [env (env)]
     (or (get env "CIRCLE_PROJECT_ORG")
         (get env "CIRCLECI_PROJECT_ORG"))))
 
-(defn cci-vcs-type []
+(defn- cci-vcs-type []
   (let [env (env)]
     (or (get env "CIRCLE_VCS_TYPE")
-        (get env "CIRCLECI_VCS_TYPE"))))
+        (get env "CIRCLECI_VCS_TYPE")
+        "github")))
 
 (defn cci-base-url
   ([vcs-type user-or-org project]
@@ -167,13 +168,31 @@
                as     :json}
         :as   opts}]
   (let [url                    (full-url url query-params)
-        {:keys [exit out err]} (sh/sh "curl" "-XGET" "-H" "'Accept: application/json'" url)]
-    {:status 200
-     :body   (json/parse-string out true)}))
+        _ (intern 'user 'url url)
+        {:keys [exit out err]} (sh/sh "curl" "-XGET" "-H" "'Content-Type: application/json'" "-H" "'Accept: application/json'" url)]
+    (if (zero? exit)
+      {:status 200
+       :body   (try
+                 (json/parse-string out true)
+                 (catch JsonParseException e
+                   (when (re-find #"Unexpected character" (.getMessage e))
+                     (binding [*out* *err*]
+                       (println "Unexpected CircleCI response:")
+                       (println out)))
+                   (throw e)))}
+      {:status 500
+       :body out})))
 
-(defn cci-builds [{:keys [branch filter limit
-                          project token username vcs-type]
-                   :or   {limit 5}}]
+(defn- filter-by-job-name
+  [job-name resp]
+  (update resp
+          :body
+          (partial filter #(= job-name (get-in % [:workflows :job_name])))))
+
+(defn cci-builds-data [{:keys [branch filter limit
+                               project token username vcs-type
+                               job-name]
+                        :or   {limit 5}}]
   (let [base-url (cci-base-url vcs-type username project)
         url    (if branch
                  (str base-url "/tree/" branch)
@@ -181,9 +200,16 @@
         params (cond-> {:circle-token token
                         :limit limit}
                  filter (assoc :filter filter))
-        resp   (http-get url {:accept       :json
-                              :as           :json
-                              :query-params params})
+        resp (http-get url {:accept       :json
+                            :as           :json
+                            :query-params params})
+        resp (if job-name
+               (filter-by-job-name job-name resp)
+               resp)]
+    [url resp]))
+
+(defn cci-builds [opts]
+  (let [[url resp] (cci-builds-data opts)
         status (:status resp)]
     (case status
       200 (print-output builds-columns (builds-table (:body resp)))
@@ -212,6 +238,7 @@
    ["-p" "--project PROJECT_NAME" "Project or repository name"]
    ["-b" "--branch BRANCH_NAME" "(Optional) Branch name"]
    ["-n" "--build-num BUILD_NUMBER" "(Optional) Build number, for details on single build."]
+   ["-j" "--job-name JOB_NAME" "(Optional) Filter to builds with given workflow job name."]
    ["-c" "--[no-]color" "Colorize output with ANSI escape codes (defaults to true)." :default true]
    ["-f" "--output-format FORMAT" "Output format. One of: 'table', 'json', 'edn'." :default "table"]
    ["-h" "--help"]
@@ -262,7 +289,8 @@
         username      (or username
                           (cci-project-user)
                           (cci-project-org))
-        vcs-type      (keyword vcs-type)
+        vcs-type      (or (and vcs-type (keyword vcs-type))
+                          (cci-vcs-type))
         return        {:options (assoc options
                                        :output-format output-format
                                        :token token
@@ -321,7 +349,7 @@
                :ok? 0)))))
 
 (defn run [options]
-  (if-let [build-number (:build-num options)]
+  (if (:build-num options)
     (cci-build options)
     (cci-builds options))
   (shutdown-agents))
